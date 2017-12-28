@@ -154,14 +154,16 @@ sub checkFunctionTypeList(@checked, @checker) {
 # ====================
 
 grammar MiniC {
-  token TOP {
-    :my $*ST = SymbolTable.new;
-    <externalDeclaration>+
-  }
 
   # ====================
   # MiniC Syntax
   # ====================
+
+  token TOP { # translateUnit
+    :my $*ST = SymbolTable.new;
+    <externalDeclaration>+
+  }
+
   token externalDeclaration {
     | <functionDeclaration>
     | <functionDefinition>

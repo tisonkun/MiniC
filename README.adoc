@@ -11,6 +11,8 @@ Alex Chen <wander4096@gmail.com>
 :doctype: article
 :lang: zh
 
+Assume all abs(integers) is not so big that we are saved from integer overflow.
+
 [source,perl6]
 --------------------
 grammar MiniC {
@@ -176,3 +178,27 @@ grammar MiniC {
   token DELIM { '$' }
 }
 --------------------
+
+Risc V insturction
+
+----
+x = y || z => or reg(x),reg(y),reg(z)
+              snez reg(x),reg(x)
+  # without short circuit, it's same as 'x = Bool(y | z)'
+
+x = y && z => and reg(x),reg(y),reg(z)
+              snez reg(x),reg(x)
+  # without short circuit, it's same as 'x = Bool(y & z)'
+
+x = y == z => xor reg(x),reg(y),reg(z)
+              seqz reg(x),reg(x)
+
+x = y != z => xor reg(x),reg(y),reg(z)
+              snez reg(x),reg(x)
+
+x = y < z => slt reg(x),reg(y),reg(z)
+
+x = y > z => sgt reg(x),reg(y),reg(z)
+
+if x == 0 goto L => beqz reg(x),.L
+----
