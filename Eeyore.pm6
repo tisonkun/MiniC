@@ -2,13 +2,15 @@
 
 # use Grammar::Tracer;
 
+unit module Eeyore;
+
 # ====================
 # Tokenizer and Parser
 #   Build Quadruple
 # ====================
 
-my %SYMBOLS;
-my %FUNCTIONS;
+our %SYMBOLS is export;
+our %FUNCTIONS is export;
 
 grammar Eeyore {
   # ====================
@@ -88,7 +90,7 @@ grammar Eeyore {
       my %instruction;
       %instruction<id> = %FUNCTIONS{$*FUNCTION}.elems;
       %instruction<type> = 'unary';
-      %instruction<op> = $<binaryOp>.made;
+      %instruction<op> = $<unaryOp>.made;
       %instruction<def> = $<VARIABLE>.made;
       %instruction<use> = [$<rightValue>.made];
       %FUNCTIONS{$*FUNCTION}.push: %instruction;
@@ -268,19 +270,19 @@ die "Syntax error" unless Eeyore.parse($*IN.slurp);
 # say %SYMBOLS.perl;
 # say %FUNCTIONS.perl;
 
-note qq:to/END/;
-  # ====================
-  # SYMBOL TABLE
-  # ====================
-  END
-.note for %SYMBOLS;
-note "";
-for %FUNCTIONS.kv -> $function, @instruction {
-  note qq:to/END/;
-    # ====================
-    # FUNCTION $function
-    # ====================
-    END
-  .note for @instruction;
-  note "";
-}
+# note qq:to/END/;
+#   # ====================
+#   # SYMBOL TABLE
+#   # ====================
+#   END
+# .note for %SYMBOLS;
+# note "";
+# for %FUNCTIONS.kv -> $function, @instruction {
+#   note qq:to/END/;
+#     # ====================
+#     # FUNCTION $function
+#     # ====================
+#     END
+#   .note for @instruction;
+#   note "";
+# }

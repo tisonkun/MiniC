@@ -2,6 +2,9 @@
 
 # use Grammar::Tracer;
 
+use lib '.';
+use Lexer;
+
 # ====================
 # Symbol Counter
 # ====================
@@ -533,7 +536,7 @@ grammar MiniC {
   token DELIM { '$' }
 }
 
-die "Syntax error" unless MiniC.parse($*IN.slurp);
+die "Syntax error" unless MiniC.parse($TOKENS);
 # dd MiniC.new._RESERVED_WORD;
 # say 'int$'.match(/<MiniC::_RESERVED_WORD>/)
 
