@@ -134,6 +134,46 @@ for %BLOCKS.kv -> $function, %blocks {
 # Analyse and Allocation
 # ====================
 
+for %OPTIMIZED.kv -> $function, @instruction {
+  .<prev> = [] for @instruction;
+  .<succ> = [] for @instruction;
+  .<live> = [] for @instruction;
+  @instruction[0]<prev>.push("-1");
+
+  for ^@instruction.elems -> $id {
+    my $instruction := @instruction[$id];
+    given $instruction<type> {
+      when 'return' {
+        ;
+      }
+      when 'ifFalse' {
+        $instruction<succ>.push(resolveLabel($instruction<label>));
+        next unless $id + 1 < @instruction.elems;
+        $instruction<succ>.push($id + 1);
+        $instruction<succ>.unique;
+      }
+      when 'goto' {
+        $instruction<succ>.push(resolveLabel($instruction<label>));
+      }
+      default {
+        next unless $id + 1 < @instruction.elems;
+        $instruction<succ>.push($id + 1);
+      }
+    }
+    for $instruction<succ>.Array {
+      @instruction[$_]<prev>.push($instruction<id>);
+    }
+  }
+
+    note qq:to/END/;
+      # ====================
+      # FUNCTION $function
+      # ====================
+      END
+    .note for @instruction;
+    note "";
+
+}
 
 
 # ====================
