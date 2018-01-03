@@ -112,29 +112,25 @@ for %BLOCKS.kv -> $function, %blocks {
   }
 }
 
-my %OPTIMIZED;
+# ====================
+# Convert BLOCKS to LINEAR
+# ====================
+
+my %LINEAR;
 for %BLOCKS.kv -> $function, %blocks {
-  %OPTIMIZED{$function} = [];
+  %LINEAR{$function} = [];
   for ^%blocks.elems -> $blockId {
-    %OPTIMIZED{$function}.append(%blocks{$blockId}.Array);
+    %LINEAR{$function}.append(%blocks{$blockId}.Array);
   }
 }
 
-# for %OPTIMIZED.kv -> $function, @instruction {
-#   note qq:to/END/;
-#     # ====================
-#     # FUNCTION $function
-#     # ====================
-#     END
-#   .note for @instruction;
-#   note "";
-# }
+
 
 # ====================
 # Analyse and Allocation
 # ====================
-
-for %OPTIMIZED.kv -> $function, @instruction {
+my %livenessAnalyse;
+for %LINEAR.kv -> $function, @instruction {
   .<prev> = [] for @instruction;
   .<succ> = [] for @instruction;
   .<live> = [] for @instruction;
@@ -165,16 +161,71 @@ for %OPTIMIZED.kv -> $function, @instruction {
     }
   }
 
-    note qq:to/END/;
-      # ====================
-      # FUNCTION $function
-      # ====================
-      END
-    .note for @instruction;
-    note "";
 
+  # =================
+  # Generate Live Range
+  # =================
+  for @instruction -> $instruction {
+    next unless defined $instruction<use>;
+    for $instruction<use>.Array -> $usedRval {
+      next if $usedRval.match(/^\d+$/);
+
+      my @notifyLiveQueue = [];
+      unless $usedRval (elem) $instruction<live> {
+        $instruction<live>.push($usedRval);
+      } # Do not forget defined and used in the same instruction
+
+      @notifyLiveQueue.append($instruction<prev>.Array);
+      while @notifyLiveQueue.elems > 0 {
+        my $notifiedId = @notifyLiveQueue.shift;
+        next if $notifiedId < 0;
+        next if $usedRval (elem) @instruction[$notifiedId]<live>;
+        next if $usedRval (elem) @instruction[$notifiedId]<def>;
+        @instruction[$notifiedId]<live>.push($usedRval);
+        @notifyLiveQueue.append(@instruction[$notifiedId]<prev>.Array);
+      }
+    }
+  }
+
+
+
+  # =================
+  # Generate Live Interval
+  # =================
+  %livenessAnalyse{$function} = Hash.new;
+  for @instruction -> $instruction {
+    for $instruction<live>.Array -> $variable {
+      unless defined %livenessAnalyse{$function}{$variable} {
+        %livenessAnalyse{$function}{$variable} = { };
+        %livenessAnalyse{$function}{$variable}<start> = Inf;
+        %livenessAnalyse{$function}{$variable}<end> = -Inf;
+        %livenessAnalyse{$function}{$variable}<reg> = "";
+      }
+      %livenessAnalyse{$function}{$variable}<start> min= $instruction<id>-1;
+      %livenessAnalyse{$function}{$variable}<start> max= 0;
+      %livenessAnalyse{$function}{$variable}<end> max= $instruction<id>;
+    }
+  }
+
+  note qq:to/END/;
+    # ====================
+    # FUNCTION $function
+    # ====================
+    END
+  .note for %livenessAnalyse{$function}.Hash;
+  note "";
 }
 
+
+# for %LINEAR.kv -> $function, @instruction {
+#   note qq:to/END/;
+#     # ====================
+#     # FUNCTION $function
+#     # ====================
+#     END
+#   .note for @instruction;
+#   note "";
+# }
 
 # ====================
 # Utility Function
