@@ -267,22 +267,3 @@ grammar Eeyore {
 }
 
 die "Syntax error" unless Eeyore.parse($*IN.slurp);
-# say %SYMBOLS.perl;
-# say %FUNCTIONS.perl;
-
-# note qq:to/END/;
-#   # ====================
-#   # SYMBOL TABLE
-#   # ====================
-#   END
-# .note for %SYMBOLS;
-# note "";
-# for %FUNCTIONS.kv -> $function, @instruction {
-#   note qq:to/END/;
-#     # ====================
-#     # FUNCTION $function
-#     # ====================
-#     END
-#   .note for @instruction;
-#   note "";
-# }

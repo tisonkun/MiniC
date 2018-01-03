@@ -13,6 +13,8 @@ Alex Chen <wander4096@gmail.com>
 
 Assume all abs(integers) is not so big that we are saved from integer overflow.
 
+Analyse which registers a function used.
+
 [source,perl6]
 --------------------
 grammar MiniC {
