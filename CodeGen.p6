@@ -251,6 +251,7 @@ for %LINEAR.kv -> $function, %instruction {
   ];
 
   my %registers;
+  %SYMBOLS{$function}<usedCallee> = Hash.new;
   for @variables -> %variableInfo {
     my $variable = %variableInfo.key;
 
@@ -275,6 +276,7 @@ for %LINEAR.kv -> $function, %instruction {
         my $register = @calleeSave.shift;
         %livenessAnalyse{$function}{$variable}<reg> = $register;
         %registers{$register} = $variable;
+        %SYMBOLS{$function}<usedCallee>{$register} = True;
         next;
       }
     }
@@ -293,12 +295,31 @@ for %LINEAR.kv -> $function, %instruction {
   #   END
   # .note for @variables;
   # note %usedOnCall;
+  # note %SYMBOLS{$function}<usedCallee>;
   # note "";
 }
 
 # ====================
 # Code Generate
 # ====================
+
+for %SYMBOLS.kv -> $id, %info {
+  next unless isGlobal($id);
+  say "\t.comm\t$id,{%info<size>*4},4";
+}
+
+for %LINEAR.kv -> $function, %instruction {
+  my @instruction = %instruction.values.sort(*.<id>);
+
+  # note qq:to/END/;
+  #   # =================
+  #   # Function $function
+  #   # =================
+  #   END
+  # .note for @instruction;
+  # note "";
+}
+
 
 # ====================
 # Utility Function
@@ -337,4 +358,9 @@ sub resolveBinary(Str $op, Int $lhs, Int $rhs) {
 
 sub isInteger($var) {
   return so $var.match(/^\-?\d+$/);
+}
+
+sub isGlobal($id) {
+  return False unless defined %SYMBOLS{$id};
+  return $id.starts-with("g");
 }

@@ -37,6 +37,7 @@ grammar Eeyore {
     | <VAR> <VARIABLE> <NEWLINE> {
       my %info = %(
         id => $<VARIABLE>.made,
+        size => 1,
         type => 'Scalar',
       );
       %SYMBOLS{%info<id>} = %info;
