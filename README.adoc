@@ -204,7 +204,9 @@ x = y > z => sgt reg(x),reg(y),reg(z)
 
 if x == 0 goto L => beqz reg(x),.L
 
-x = !y =>
+x = !y => seqz reg(x),reg(y)
+
+x = -y => sub reg(x),zero,reg(y)
 ----
 
 [] aarg
