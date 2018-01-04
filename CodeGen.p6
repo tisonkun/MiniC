@@ -168,15 +168,6 @@ for %LINEAR.kv -> $function, %instruction {
     }
   }
 
-  # note qq:to/END/;
-  #   # ====================
-  #   # FUNCTION $function
-  #   # ====================
-  #   END
-  #
-  # .note for %instruction.Array.sort(*.key.Int);
-  # note "";
-
 
   # =================
   # Generate Live Range
@@ -234,21 +225,16 @@ for %LINEAR.kv -> $function, %instruction {
     !! $^b.value<end> <=> $^a.value<end>
   });
 
-  # note qq:to/END/;
-  #   # ====================
-  #   # FUNCTION $function
-  #   # ====================
-  #   END
-  # .note for @variables;
-  # note "";
-
   my @callerSave = [
-    "s0", "s1", "s2", "s3", "s4", "s5",
-    "s6", "s7", "s8", "s9", "s10", "s11",
+    "t0", "t1", "t2", "t3", "t4", "t5", "t6",
+    "s7", "s8", "s9", "s10", "s11",
   ];
   my @calleeSave = [
-    "t0", "t1", "t2", "t3", "t4", "t5", "t6",
+    "s0", "s1", "s2", "s3", "s4", "s5", "s6",
   ];
+
+  my %callerSave = @callerSave.map(* => True);
+  my %calleeSave = @calleeSave.map(* => True);
 
   my %registers;
   %SYMBOLS{$function}<usedCallee> = Hash.new;
@@ -262,8 +248,8 @@ for %LINEAR.kv -> $function, %instruction {
     for %registers.kv -> $register, $holdVariable {
       if %livenessAnalyse{$function}{$holdVariable}<end> < %livenessAnalyse{$function}{$variable}<start> {
         %registers{$register} :delete;
-        @calleeSave.unshift($register) if $register.starts-with("t");
-        @callerSave.unshift($register) if $register.starts-with("s");
+        @calleeSave.unshift($register) if %calleeSave{$register};
+        @callerSave.unshift($register) if %callerSave{$register};
       }
     }
 
@@ -319,18 +305,22 @@ for %LINEAR.kv -> $function, %instruction {
   #   END
   # .note for @instruction;
   # note "";
+  # exit;
 
   my @callerSave = [
-    "s0", "s1", "s2", "s3", "s4", "s5",
-    "s6", "s7", "s8", "s9", "s10", "s11",
+    "t0", "t1", "t2", "t3", "t4", "t5", "t6",
+    "s7", "s8", "s9", "s10", "s11",
   ];
   my @calleeSave = [
-    "t0", "t1", "t2", "t3", "t4", "t5", "t6",
+    "s0", "s1", "s2", "s3", "s4", "s5", "s6",
   ];
+  my %callerSave = @callerSave.map(* => True);
+  my %calleeSave = @calleeSave.map(* => True);
 
   my @riscvCode;
   my $stackSize = 0;
   my $currentParameterId = 0;
+  my @parameterCode;
   my %registers;
   my %variables;
 
@@ -392,17 +382,17 @@ for %LINEAR.kv -> $function, %instruction {
 
     given $instruction<type> {
       when 'param' {
-        if $currentParameterId eq 0 {
-          for %registers.kv -> $register, $variable {
-            storeCaller($register, $variable);
-          }
-        }
         registVariable($instruction<use>.Array[0]);
         loadParameter($currentParameterId, $instruction<use>.Array[0]);
         $currentParameterId += 1;
       }
       when 'call' {
         $currentParameterId = 0;
+        for %registers.kv -> $register, $variable {
+          storeCaller($register, $variable);
+        }
+        @riscvCode.append(@parameterCode);
+        @parameterCode = [];
         @riscvCode.push("\tcall\t{$instruction<function>.substr(2)}");
         for %registers.kv -> $register, $variable {
           loadCaller($register, $variable);
@@ -520,15 +510,15 @@ for %LINEAR.kv -> $function, %instruction {
   sub loadParameter($currentParameterId, $rightValue) {
     my $register = "a$currentParameterId";
     if isInteger($rightValue) {
-      @riscvCode.push("\tli\t$register,$rightValue");
+      @parameterCode.push("\tli\t$register,$rightValue");
     } elsif %variables{$rightValue}<reg> {
-      @riscvCode.push("\tmv\t$register,{%variables{$rightValue}<reg>}");
+      @parameterCode.push("\tmv\t$register,{%variables{$rightValue}<reg>}");
     } else {
       if isGlobal($rightValue) {
-        @riscvCode.push("\tlui\t$register,\%hi($rightValue)");
-        @riscvCode.push("\tlw\t$register,\%lo($rightValue)($register)");
+        @parameterCode.push("\tlui\t$register,\%hi($rightValue)");
+        @parameterCode.push("\tlw\t$register,\%lo($rightValue)($register)");
       } else {
-        @riscvCode.push("\tlw\t$register,{%variables{$rightValue}<location>*4}(sp)");
+        @parameterCode.push("\tlw\t$register,{%variables{$rightValue}<location>*4}(sp)");
       }
     }
   }
@@ -581,7 +571,7 @@ for %LINEAR.kv -> $function, %instruction {
   }
 
   sub loadCaller($register, $variable) {
-    return unless $register (elem) @callerSave;
+    return unless %callerSave{$register};
     if isGlobal($variable) {
       @riscvCode.push("\tlui\ta5,\%hi($variable)");
       @riscvCode.push("\tlw\t$register,\%lo($variable)(a5)");
@@ -591,7 +581,7 @@ for %LINEAR.kv -> $function, %instruction {
   }
 
   sub storeCaller($register, $variable) {
-    return unless $register (elem) @callerSave;
+    return unless %callerSave{$register};
     if isGlobal($variable) {
       @riscvCode.push("\tlui\ta5,\%hi($variable)");
       @riscvCode.push("\tsw\t$register,\%lo($variable)(a5)");

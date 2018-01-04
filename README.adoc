@@ -204,3 +204,24 @@ x = y > z => sgt reg(x),reg(y),reg(z)
 
 if x == 0 goto L => beqz reg(x),.L
 ----
+
+[] aarg
+[] ab
+[] arr
+[x] cmt
+[] expr
+[] fac
+[] func
+[] funny
+[] id
+[] if
+[] ifelse
+[-] logic
+[] nnim
+[] qsort
+[] recur
+[] revstr
+[] scope
+[] sort
+[] while
+[] wseq
