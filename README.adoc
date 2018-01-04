@@ -203,10 +203,12 @@ x = y < z => slt reg(x),reg(y),reg(z)
 x = y > z => sgt reg(x),reg(y),reg(z)
 
 if x == 0 goto L => beqz reg(x),.L
+
+x = !y =>
 ----
 
 [] aarg
-[] ab
+[x] ab
 [] arr
 [x] cmt
 [] expr

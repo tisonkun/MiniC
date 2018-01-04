@@ -472,6 +472,23 @@ for %LINEAR.kv -> $function, %instruction {
           storeIfSpilled($instruction<def>, $reg2);
         }
       }
+      when 'unary' {
+        if isDefineValid($instruction<def>, $instruction) {
+          registVariable($instruction<def>);
+          registVariable($instruction<use>.Array[0]);
+          my $reg2 = getRegister($instruction<def>, "a2");
+          my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+          given $instruction<op> {
+            when '-' {
+              @riscvCode.push("\tsub\t$reg2,zero,$reg0");
+            }
+            when '!' {
+              @riscvCode.push("\tseqz\t$reg2,$reg0");
+            }
+          }
+          storeIfSpilled($instruction<def>, $reg2);
+        }
+      }
       default {
         die "NYI {$instruction<type>}";
       }
