@@ -213,8 +213,8 @@ x = -y => sub reg(x),zero,reg(y)
 [x] ab
 [] arr
 [x] cmt
-[] expr
-[] fac
+[x] expr
+[x] fac
 [] func
 [] funny
 [] id

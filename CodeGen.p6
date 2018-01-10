@@ -405,6 +405,11 @@ for %LINEAR.kv -> $function, %instruction {
         }
       }
       when 'return' {
+
+        for @usedCallee Z (1..*) -> ($register, $location) {
+          @riscvCode.push("\tlw\t$register,{$location*4}(sp)");
+        }
+
         registVariable($instruction<use>.Array[0]);
         my $register = getRegister($instruction<use>.Array[0], "a0");
         @riscvCode.push("\tmv\ta0,$register");
@@ -489,6 +494,17 @@ for %LINEAR.kv -> $function, %instruction {
           storeIfSpilled($instruction<def>, $reg2);
         }
       }
+      when 'ifFalse' {
+        registVariable($instruction<use>.Array[0]);
+        my $reg = getRegister($instruction<use>.Array[0], "a0");
+        @riscvCode.push("\tbeq\t$reg,zero,.{$instruction<label>}");
+      }
+      when 'label' {
+        @riscvCode.push(".{$instruction<label>}:");
+      }
+      when 'goto' {
+        @riscvCode.push("\tj\t.{$instruction<label>}");
+      }
       default {
         die "NYI {$instruction<type>}";
       }
@@ -502,14 +518,6 @@ for %LINEAR.kv -> $function, %instruction {
       }
     }
 
-  }
-
-  # ====================
-  # Recover Used Callee
-  # ====================
-
-  for @usedCallee Z (1..*) -> ($register, $location) {
-    @riscvCode.push("\tlw\t$register,{$location*4}(sp)");
   }
 
   @riscvCode.push("\t.size\t{$function.substr(2)}, .-{$function.substr(2)}");
@@ -534,8 +542,10 @@ for %LINEAR.kv -> $function, %instruction {
       if isGlobal($rightValue) {
         @parameterCode.push("\tlui\t$register,\%hi($rightValue)");
         @parameterCode.push("\tlw\t$register,\%lo($rightValue)($register)");
+        # TODO Array
       } else {
         @parameterCode.push("\tlw\t$register,{%variables{$rightValue}<location>*4}(sp)");
+        # TODO Array
       }
     }
   }
@@ -548,30 +558,49 @@ for %LINEAR.kv -> $function, %instruction {
       my $register = %livenessAnalyse{$function}{$variable}<reg>;
       %variables{$variable}<reg> = $register;
       %registers{$register} = $variable;
+      if isGlobal($variable) {
+        if isArray($variable) {
+          @riscvCode.push("\tlui\ta5,\%hi($variable)");
+          @riscvCode.push("\tadd\t$register,a5,\%lo($variable)");
+        } else {
+          @riscvCode.push("\tlui\ta5,\%hi($variable)");
+          @riscvCode.push("\tlw\t$register,\%lo($variable)(a5)");
+        }
+        return;
+      } else {
+        if isArray($variable) {
+          @riscvCode.push("\tadd\t$register,sp,{$stackSize*4}");
+        }
+      }
     }
-    return if isGlobal($variable);
     %variables{$variable}<location> = $stackSize;
-    $stackSize += %SYMBOLS{$variable}<size> div 4;
+    if isArray($variable) {
+      $stackSize += %SYMBOLS{$variable}<size> div 4;
+    } else {
+      $stackSize += 1;
+    }
   }
 
   sub getRegister($variable, $spilled) {
     if isInteger($variable) {
-      @riscvCode.push("\tli\ta0,$variable");
-      return "a0";
+      @riscvCode.push("\tli\ta5,$variable");
+      return "a5";
     }
     if %variables{$variable}<reg> {
       return %variables{$variable}<reg>;
     }
     loadSpilled($variable, $spilled);
-    return "a$spilled";
+    return $spilled;
   }
 
   sub loadSpilled($variable, $spilled) {
     if isGlobal($variable) {
       @riscvCode.push("\tlui\ta5,\%hi($variable)");
       @riscvCode.push("\tlw\t$spilled,\%lo($variable)(a5)");
+      # TODO Array
     } else {
       @riscvCode.push("\tlw\t$spilled,{%variables{$variable}<location>*4}(sp)");
+      # TODO Array
     }
   }
 
@@ -592,8 +621,10 @@ for %LINEAR.kv -> $function, %instruction {
     if isGlobal($variable) {
       @riscvCode.push("\tlui\ta5,\%hi($variable)");
       @riscvCode.push("\tlw\t$register,\%lo($variable)(a5)");
+      # TODO Array
     } else {
       @riscvCode.push("\tlw\t$register,{%variables{$variable}<location>*4}(sp)");
+      # TODO Array
     }
   }
 
@@ -602,8 +633,10 @@ for %LINEAR.kv -> $function, %instruction {
     if isGlobal($variable) {
       @riscvCode.push("\tlui\ta5,\%hi($variable)");
       @riscvCode.push("\tsw\t$register,\%lo($variable)(a5)");
+      # TODO Array
     } else {
       @riscvCode.push("\tsw\t$register,{%variables{$variable}<location>*4}(sp)");
+      # TODO Array
     }
   }
 
