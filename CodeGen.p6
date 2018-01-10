@@ -406,13 +406,12 @@ for %LINEAR.kv -> $function, %instruction {
       }
       when 'return' {
 
-        for @usedCallee Z (1..*) -> ($register, $location) {
-          @riscvCode.push("\tlw\t$register,{$location*4}(sp)");
-        }
-
         registVariable($instruction<use>.Array[0]);
         my $register = getRegister($instruction<use>.Array[0], "a0");
         @riscvCode.push("\tmv\ta0,$register");
+        for @usedCallee Z (1..*) -> ($register, $location) {
+          @riscvCode.push("\tlw\t$register,{$location*4}(sp)");
+        }
         @riscvCode.push("\tlw\tra,STK-4(sp)");
         @riscvCode.push("\tadd\tsp,sp,STK");
         @riscvCode.push("\tjr\tra");
