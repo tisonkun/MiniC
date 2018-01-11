@@ -86,6 +86,20 @@ for %FUNCTIONS.kv -> $function, @instruction {
 
 for %BLOCKS.kv -> $function, %blocks {
   for ^%blocks.elems -> $blockId {
+    my %VALUE;
+  loop {
+    my $modified = False;
+    for ^%blocks{$blockId}.Array.elems -> $instructionId {
+      my $instruction := %blocks{$blockId}[$instructionId];
+      given $instruction<type> {
+        when 'scalarRval' {
+          %VALUE{$instruction<def>} = $instruction<use>[0];
+          if defined %VALUE{%VALUE{$instruction<def>}} {
+            %VALUE{$instruction<def>} = %VALUE{%VALUE{$instruction<def>}};
+          }
+        }
+      }
+    }
     for ^%blocks{$blockId}.Array.elems -> $instructionId {
       my $instruction := %blocks{$blockId}[$instructionId];
       given $instruction<type> {
@@ -97,6 +111,15 @@ for %BLOCKS.kv -> $function, %blocks {
             %instruction<def> = $instruction<def>;
             %instruction<use> = [resolveUnary($instruction<op>, $instruction<use>[0].Int)];
             $instruction = %instruction;
+            $modified = True;
+          } elsif isInteger(%VALUE{$instruction<use>[0]} // '#') {
+            my %instruction;
+            %instruction<id> = $instruction<id>;
+            %instruction<type> = 'scalarRval';
+            %instruction<def> = $instruction<def>;
+            %instruction<use> = [resolveUnary($instruction<op>, %VALUE{$instruction<use>[0]}.Int)];
+            $instruction = %instruction;
+            $modified = True;
           }
         }
         when 'binary' {
@@ -107,12 +130,42 @@ for %BLOCKS.kv -> $function, %blocks {
             %instruction<def> = $instruction<def>;
             %instruction<use> = [resolveBinary($instruction<op>, $instruction<use>[0].Int, $instruction<use>[1].Int)];
             $instruction = %instruction;
+            $modified = True;
+          } elsif isInteger(%VALUE{$instruction<use>[0]} // '#') and isInteger($instruction<use>[1]) {
+            my %instruction;
+            %instruction<id> = $instruction<id>;
+            %instruction<type> = 'scalarRval';
+            %instruction<def> = $instruction<def>;
+            %instruction<use> = [resolveBinary($instruction<op>, %VALUE{$instruction<use>[0]}.Int, $instruction<use>[1].Int)];
+            $instruction = %instruction;
+            $modified = True;
+          } elsif isInteger($instruction<use>[0]) and isInteger(%VALUE{$instruction<use>[1]} // '#') {
+            my %instruction;
+            %instruction<id> = $instruction<id>;
+            %instruction<type> = 'scalarRval';
+            %instruction<def> = $instruction<def>;
+            %instruction<use> = [resolveBinary($instruction<op>, $instruction<use>[0].Int, %VALUE{$instruction<use>[1]}.Int)];
+            $instruction = %instruction;
+            $modified = True;
+          } elsif isInteger(%VALUE{$instruction<use>[0]} // '#') and isInteger(%VALUE{$instruction<use>[1]} // '#') {
+            my %instruction;
+            %instruction<id> = $instruction<id>;
+            %instruction<type> = 'scalarRval';
+            %instruction<def> = $instruction<def>;
+            %instruction<use> = [resolveBinary($instruction<op>, %VALUE{$instruction<use>[0]}.Int, %VALUE{$instruction<use>[1]}.Int)];
+            $instruction = %instruction;
+            $modified = True;
           }
         }
       }
+      last if $modified;
     }
+
+    last unless $modified;
+  }
   }
 }
+
 
 # ====================
 # Convert BLOCKS to LINEAR
