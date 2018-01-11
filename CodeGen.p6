@@ -396,6 +396,7 @@ for %LINEAR.kv -> $function, %instruction {
         $currentParameterId = 0;
         for %registers.kv -> $register, $variable {
           storeCaller($register, $variable);
+          storeGlobal($register, $variable);
         }
         @riscvCode.append(@parameterCode);
         @parameterCode = [];
@@ -568,12 +569,19 @@ for %LINEAR.kv -> $function, %instruction {
       @parameterCode.push("\tmv\t$register,{%variables{$rightValue}<reg>}");
     } else {
       if isGlobal($rightValue) {
-        @parameterCode.push("\tlui\t$register,\%hi($rightValue)");
-        @parameterCode.push("\tlw\t$register,\%lo($rightValue)($register)");
-        # TODO Array
+        if isArray($rightValue) {
+          @parameterCode.push("\tlui\t$register,\%hi($rightValue)");
+          @parameterCode.push("\tadd\t$register,$register,\%lo($rightValue)");
+        } else {
+          @parameterCode.push("\tlui\t$register,\%hi($rightValue)");
+          @parameterCode.push("\tlw\t$register,\%lo($rightValue)($register)");
+        }
       } else {
-        @parameterCode.push("\tlw\t$register,{%variables{$rightValue}<location>*4}(sp)");
-        # TODO Array
+        if isArray($rightValue) {
+          @parameterCode.push("\tadd\t$register,sp,{%variables{$rightValue}<location>*4}");
+        } else {
+          @parameterCode.push("\tlw\t$register,{%variables{$rightValue}<location>*4}(sp)");
+        }
       }
     }
   }
@@ -623,12 +631,19 @@ for %LINEAR.kv -> $function, %instruction {
 
   sub loadSpilled($variable, $spilled) {
     if isGlobal($variable) {
-      @riscvCode.push("\tlui\ta5,\%hi($variable)");
-      @riscvCode.push("\tlw\t$spilled,\%lo($variable)(a5)");
-      # TODO Array
+      if isArray($variable) {
+        @riscvCode.push("\tlui\ta5,\%hi($variable)");
+        @riscvCode.push("\tadd\t$spilled,a5,\%lo($variable)");
+      } else {
+        @riscvCode.push("\tlui\ta5,\%hi($variable)");
+        @riscvCode.push("\tlw\t$spilled,\%lo($variable)(a5)");
+      }
     } else {
-      @riscvCode.push("\tlw\t$spilled,{%variables{$variable}<location>*4}(sp)");
-      # TODO Array
+      if isArray($variable) {
+        @riscvCode.push("\tadd\t$spilled,sp,{%variables{$variable}<location>*4}");
+      } else {
+        @riscvCode.push("\tlw\t$spilled,{%variables{$variable}<location>*4}(sp)");
+      }
     }
   }
 
@@ -647,25 +662,38 @@ for %LINEAR.kv -> $function, %instruction {
   sub loadCaller($register, $variable) {
     return unless %callerSave{$register};
     if isGlobal($variable) {
-      @riscvCode.push("\tlui\ta5,\%hi($variable)");
-      @riscvCode.push("\tlw\t$register,\%lo($variable)(a5)");
-      # TODO Array
+      if isArray($variable) {
+        @riscvCode.push("\tlui\ta5,\%hi($variable)");
+        @riscvCode.push("\tadd\t$register,a5,\%lo($variable)");
+      } else {
+        @riscvCode.push("\tlui\ta5,\%hi($variable)");
+        @riscvCode.push("\tlw\t$register,\%lo($variable)(a5)");
+      }
     } else {
-      @riscvCode.push("\tlw\t$register,{%variables{$variable}<location>*4}(sp)");
-      # TODO Array
+      if isArray($variable) {
+        @riscvCode.push("\tadd\t$register,sp,{%variables{$variable}<location>*4}");
+      } else {
+        @riscvCode.push("\tlw\t$register,{%variables{$variable}<location>*4}(sp)");
+      }
     }
   }
 
   sub storeCaller($register, $variable) {
     return unless %callerSave{$register};
+    return if isArray($variable);
     if isGlobal($variable) {
       @riscvCode.push("\tlui\ta5,\%hi($variable)");
       @riscvCode.push("\tsw\t$register,\%lo($variable)(a5)");
-      # TODO Array
     } else {
       @riscvCode.push("\tsw\t$register,{%variables{$variable}<location>*4}(sp)");
-      # TODO Array
     }
+  }
+
+  sub storeGlobal($register, $variable) {
+    return unless isGlobal($variable);
+    return if isArray($variable);
+    @riscvCode.push("\tlui\ta5,\%hi($variable)");
+    @riscvCode.push("\tsw\t$register,\%lo($variable)(a5)");
   }
 
   sub isDefineValid($variable, $instruction) {

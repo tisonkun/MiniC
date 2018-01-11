@@ -216,7 +216,7 @@ x = -y => sub reg(x),zero,reg(y)
 [x] expr
 [x] fac
 [x] func
-[] funny
+[x] funny
 [x] id
 [x] if
 [x] ifelse
