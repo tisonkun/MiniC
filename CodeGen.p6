@@ -213,6 +213,7 @@ for %LINEAR.kv -> $function, %instruction {
       %livenessAnalyse{$function}{$variable}<start> min= $instruction<id>-1;
       %livenessAnalyse{$function}{$variable}<start> max= 0;
       %livenessAnalyse{$function}{$variable}<end> max= $instruction<id>;
+      next if isGlobal($variable) and !isArray($variable);
       %usedOnCall{$variable} = True if $instruction<type> eq 'call';
     }
   }
@@ -273,6 +274,7 @@ for %LINEAR.kv -> $function, %instruction {
       my $register = @callerSave.shift;
       %livenessAnalyse{$function}{$variable}<reg> = $register;
       %registers{$register} = $variable;
+      next;
     }
   }
 
@@ -396,7 +398,6 @@ for %LINEAR.kv -> $function, %instruction {
         $currentParameterId = 0;
         for %registers.kv -> $register, $variable {
           storeCaller($register, $variable);
-          storeGlobal($register, $variable);
         }
         @riscvCode.append(@parameterCode);
         @parameterCode = [];
@@ -412,10 +413,13 @@ for %LINEAR.kv -> $function, %instruction {
         }
       }
       when 'return' {
-
         registVariable($instruction<use>.Array[0]);
-        my $register = getRegister($instruction<use>.Array[0], "a0");
-        @riscvCode.push("\tmv\ta0,$register");
+        if isInteger($instruction<use>.Array[0]) {
+          @riscvCode.push("\tli\ta0,{$instruction<use>.Array[0]}");
+        } else {
+          my $register = getRegister($instruction<use>.Array[0], "a0");
+          @riscvCode.push("\tmv\ta0,$register");
+        }
         for @usedCallee Z (0..*) -> ($register, $location) {
           @riscvCode.push("\tlw\t$register,{$location*4}(sp)");
         }
@@ -428,8 +432,12 @@ for %LINEAR.kv -> $function, %instruction {
           registVariable($instruction<def>);
           registVariable($instruction<use>.Array[0]);
           my $reg2 = getRegister($instruction<def>, "a2");
-          my $reg0 = getRegister($instruction<use>.Array[0], "a0");
-          @riscvCode.push("\tmv\t$reg2,$reg0");
+          if isInteger($instruction<use>.Array[0]) {
+            @riscvCode.push("\tli\t$reg2,{$instruction<use>.Array[0]}");
+          } else {
+            my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+            @riscvCode.push("\tmv\t$reg2,$reg0");
+          }
           storeIfSpilled($instruction<def>, $reg2);
         }
       }
@@ -462,44 +470,87 @@ for %LINEAR.kv -> $function, %instruction {
           registVariable($instruction<use>.Array[0]);
           registVariable($instruction<use>.Array[1]);
           my $reg2 = getRegister($instruction<def>, "a2");
-          my $reg0 = getRegister($instruction<use>.Array[0], "a0");
-          my $reg1 = getRegister($instruction<use>.Array[1], "a1");
           given $instruction<op> {
             when '||' {
+              my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+              my $reg1 = getRegister($instruction<use>.Array[1], "a1");
               @riscvCode.push("\tor\t$reg2,$reg0,$reg1");
               @riscvCode.push("\tsnez\t$reg2,$reg2");
             }
             when '&&' {
+              my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+              my $reg1 = getRegister($instruction<use>.Array[1], "a1");
               @riscvCode.push("\tand\t$reg2,$reg0,$reg1");
               @riscvCode.push("\tsnez\t$reg2,$reg2");
             }
             when '==' {
+              my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+              my $reg1 = getRegister($instruction<use>.Array[1], "a1");
               @riscvCode.push("\txor\t$reg2,$reg0,$reg1");
               @riscvCode.push("\tseqz\t$reg2,$reg2");
             }
             when '!=' {
+              my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+              my $reg1 = getRegister($instruction<use>.Array[1], "a1");
               @riscvCode.push("\txor\t$reg2,$reg0,$reg1");
               @riscvCode.push("\tsnez\t$reg2,$reg2");
             }
             when '<' {
-              @riscvCode.push("\tslt\t$reg2,$reg0,$reg1");
+              if isInteger($instruction<use>.Array[1]) {
+                my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                @riscvCode.push("\tslt\t$reg2,$reg0,{$instruction<use>.Array[1]}");
+              } else {
+                my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                @riscvCode.push("\tslt\t$reg2,$reg0,$reg1");
+              }
             }
             when '>' {
-              @riscvCode.push("\tsgt\t$reg2,$reg0,$reg1");
+              if isInteger($instruction<use>.Array[0]) {
+                my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                @riscvCode.push("\tslt\t$reg2,$reg1,{$instruction<use>.Array[0]}");
+              } else {
+                my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                @riscvCode.push("\tsgt\t$reg2,$reg0,$reg1");
+              }
             }
             when '+' {
-              @riscvCode.push("\tadd\t$reg2,$reg0,$reg1");
+              if isInteger($instruction<use>.Array[1]) {
+                my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                @riscvCode.push("\tadd\t$reg2,$reg0,{$instruction<use>.Array[1]}");
+              } elsif isInteger($instruction<use>.Array[0]) {
+                my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                @riscvCode.push("\tadd\t$reg2,$reg1,{$instruction<use>.Array[0]}");
+              } else {
+                my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                @riscvCode.push("\tadd\t$reg2,$reg0,$reg1");
+              }
             }
             when '-' {
+              my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+              my $reg1 = getRegister($instruction<use>.Array[1], "a1");
               @riscvCode.push("\tsub\t$reg2,$reg0,$reg1");
             }
             when '*' {
-              @riscvCode.push("\tmul\t$reg2,$reg0,$reg1");
+              if $instruction<use>.Array[1] eq 4 {
+                my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                @riscvCode.push("\tsll\t$reg2,$reg0,2");
+              } else {
+                my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                @riscvCode.push("\tmul\t$reg2,$reg0,$reg1");
+              }
             }
             when '/' {
+              my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+              my $reg1 = getRegister($instruction<use>.Array[1], "a1");
               @riscvCode.push("\tdiv\t$reg2,$reg0,$reg1");
             }
             when '%' {
+              my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+              my $reg1 = getRegister($instruction<use>.Array[1], "a1");
               @riscvCode.push("\trem\t$reg2,$reg0,$reg1");
             }
           }
@@ -687,13 +738,6 @@ for %LINEAR.kv -> $function, %instruction {
     } else {
       @riscvCode.push("\tsw\t$register,{%variables{$variable}<location>*4}(sp)");
     }
-  }
-
-  sub storeGlobal($register, $variable) {
-    return unless isGlobal($variable);
-    return if isArray($variable);
-    @riscvCode.push("\tlui\ta5,\%hi($variable)");
-    @riscvCode.push("\tsw\t$register,\%lo($variable)(a5)");
   }
 
   sub isDefineValid($variable, $instruction) {
