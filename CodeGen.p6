@@ -52,11 +52,13 @@ for %FUNCTIONS.kv -> $function, @instruction {
         %BLOCKS{$function}{$blockId} = [];
         %reachedInstruction{$instructionId + 1} = True;
         %reachedInstruction{resolveLabel(@instruction[$instructionId]<label>)} = True;
+        @instruction[$instructionId]<label> = fixLabel(@instruction[$instructionId]<label>);
       }
       when 'goto' {
         $blockId += 1;
         %BLOCKS{$function}{$blockId} = [];
         %reachedInstruction{resolveLabel(@instruction[$instructionId]<label>)} = True;
+        @instruction[$instructionId]<label> = fixLabel(@instruction[$instructionId]<label>);
       }
       default {
         %reachedInstruction{$instructionId + 1} = True;
@@ -279,11 +281,11 @@ for %LINEAR.kv -> $function, %instruction {
   #   # FUNCTION $function
   #   # ====================
   #   END
+  # .note for %instruction.values.sort(*.<id>);
   # .note for @variables;
   # note %usedOnCall;
   # note %SYMBOLS{$function}<usedCallee>;
   # note "";
-  # exit;
 }
 
 # ====================
@@ -340,8 +342,8 @@ for %LINEAR.kv -> $function, %instruction {
   # Store Used Callee
   # ====================
   my @usedCallee = %SYMBOLS{$function}<usedCallee>.keys;
-  for @usedCallee Z (1..*) -> ($register, $location) {
-    @riscvCode.push("\tsw\t$register,{$location*4}(sp)");
+  for @usedCallee -> $register {
+    @riscvCode.push("\tsw\t$register,{$stackSize*4}(sp)");
     $stackSize += 1;
   }
 
@@ -380,6 +382,10 @@ for %LINEAR.kv -> $function, %instruction {
       }
     }
 
+    for $instruction<live>.Array -> $variable {
+      registVariable($variable);
+    }
+
     given $instruction<type> {
       when 'param' {
         registVariable($instruction<use>.Array[0]);
@@ -409,7 +415,7 @@ for %LINEAR.kv -> $function, %instruction {
         registVariable($instruction<use>.Array[0]);
         my $register = getRegister($instruction<use>.Array[0], "a0");
         @riscvCode.push("\tmv\ta0,$register");
-        for @usedCallee Z (1..*) -> ($register, $location) {
+        for @usedCallee Z (0..*) -> ($register, $location) {
           @riscvCode.push("\tlw\t$register,{$location*4}(sp)");
         }
         @riscvCode.push("\tlw\tra,STK-4(sp)");
@@ -423,6 +429,29 @@ for %LINEAR.kv -> $function, %instruction {
           my $reg2 = getRegister($instruction<def>, "a2");
           my $reg0 = getRegister($instruction<use>.Array[0], "a0");
           @riscvCode.push("\tmv\t$reg2,$reg0");
+          storeIfSpilled($instruction<def>, $reg2);
+        }
+      }
+      when 'arrayScalar' {
+        registVariable($instruction<use>.Array[0]);
+        registVariable($instruction<use>.Array[1]);
+        registVariable($instruction<use>.Array[2]);
+        my $reg2 = getRegister($instruction<use>.Array[0], "a2");
+        my $reg0 = getRegister($instruction<use>.Array[1], "a0");
+        my $reg1 = getRegister($instruction<use>.Array[2], "a1");
+        @riscvCode.push("\tadd\ta5,$reg2,$reg0");
+        @riscvCode.push("\tsw\t$reg1,0(a5)");
+      }
+      when 'scalarArray' {
+        if isDefineValid($instruction<def>, $instruction) {
+          registVariable($instruction<def>);
+          registVariable($instruction<use>.Array[0]);
+          registVariable($instruction<use>.Array[1]);
+          my $reg2 = getRegister($instruction<def>, "a2");
+          my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+          my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+          @riscvCode.push("\tadd\ta5,$reg0,$reg1");
+          @riscvCode.push("\tlw\t$reg2,0(a5)");
           storeIfSpilled($instruction<def>, $reg2);
         }
       }
@@ -574,7 +603,7 @@ for %LINEAR.kv -> $function, %instruction {
     }
     %variables{$variable}<location> = $stackSize;
     if isArray($variable) {
-      $stackSize += %SYMBOLS{$variable}<size> div 4;
+      $stackSize += %SYMBOLS{$variable}<size>.Int div 4;
     } else {
       $stackSize += 1;
     }
@@ -582,8 +611,8 @@ for %LINEAR.kv -> $function, %instruction {
 
   sub getRegister($variable, $spilled) {
     if isInteger($variable) {
-      @riscvCode.push("\tli\ta5,$variable");
-      return "a5";
+      @riscvCode.push("\tli\ta4,$variable");
+      return "a4";
     }
     if %variables{$variable}<reg> {
       return %variables{$variable}<reg>;
@@ -651,11 +680,18 @@ for %LINEAR.kv -> $function, %instruction {
 # ====================
 # Utility Function
 # ====================
-sub resolveLabel(Str $label is copy) is export {
+sub resolveLabel(Str $label is copy) {
   until isInteger(%SYMBOLS{$label}<location>) {
     $label = %SYMBOLS{$label}<location>;
   }
   return %SYMBOLS{$label}<location>;
+}
+
+sub fixLabel(Str $label is copy) {
+  until isInteger(%SYMBOLS{$label}<location>) {
+    $label = %SYMBOLS{$label}<location>;
+  }
+  return $label;
 }
 
 sub resolveUnary(Str $op, Int $x) {
