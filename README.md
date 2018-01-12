@@ -1992,7 +1992,7 @@ for %SYMBOLS.kv -> $id, %info {
 
 1. 课程改革时的测试文件, 包括 aarg.c, ab.c, arr.c, cmt.c, expr.c, fac.c, func.c, funny.c, id.c, if.c, ifelse.c, logic.c, nnim.c, qsort.c, recur.c, revstr.c, scope.c, sort.c, while.c, wseq.c. 测试数据为 data/ 下的数据.
 2. 个性功能的测试.
-3. 由于没有其他同学测试用的测试集, 因此没有做动态指令数测试.
+3. 网测上的二十六个测试文件.
 
 ### 测试效果
 
@@ -2007,6 +2007,29 @@ for ^100 -> $i {
   $ = shell("diff out data/$test/data$i.out");
   say $i;
 }
+```
+
+对于 (3) 部分, 全部通过测试.
+
+针对 wseq.c 得到的动态指令数效果如右. wseq.c(data/wseq/data0.in): 10296.
+
+```
+gz translate.c into gen intermediate code
+gz translate.c init max_insns512
+gz translate.c tb insns num is 1
+gz translate.c total insns num is 10294
+gz translate.c PC =  4134796902
+gz tranclate.c : exec one 64C inst
+gz translate.c tb insns num is 2
+gz translate.c total insns num is 10295
+gz translate.c PC =  4134796904
+gz tranclate.c : exec one 64G instc : ARITH_IMM/_W
+gz translate.c tb insns num is 3
+gz translate.c total insns num is 10296
+gz translate.c PC =  4134796908
+gz tranclate.c : exec one 64G instc : SYSTEM
+gz translate.c -----------------------------------------------
+gz translate.c : done gen tb,size(tpc-hpc) is 10
 ```
 
 对于错误报告测试, 效果如下:
@@ -2131,7 +2154,7 @@ end f_g
 2. aarg.c 中, 全局变量在多个函数内都有使用, 因此发现了全局标量在函数跳转时必须写回.
 3. funny.c 的逻辑比较混乱, 出现了很多疑难杂症, 但都不是什么大问题, 比如说一元运算符忘记还有 `!` 之类的, 还有数组操作的一些实现错, 发现后马上知道错误原因并且修正.
 4. qsort.c 和 wseq.c 的速度很慢, 因此考虑了增加分析 `usedOnCall`, 合理分配 Caller Save 和 Callee Save. 原本是打算直接全部 Caller Save 了事.
-5. 常量传播和折叠时, 一开始是并发的折叠, 后来发现由于不是静态单赋值, 这样会出错, 典型的场景是:
+5. 常量传播和折叠时, 一开始是并发的处理, 后来发现由于不是静态单赋值, 这样会出错, 典型的场景是:
 
 ```
 TURN 1:
@@ -2156,8 +2179,6 @@ a = 6
 没有使用 Lex/Yacc, 在后期甚至跳过 Tigger, 生成的 Eeyore 也和 writeup 的 Eeyore 不兼容.
 
 RISC-V 的模拟器没发现什么问题.
-
-Tigger 模拟器很慢, 机器代码大概十几秒的 wseq.c 要跑二十多分钟.
 
 Eeyore 模拟器不支持 `param num` 的形式.
 

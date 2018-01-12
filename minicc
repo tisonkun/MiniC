@@ -1,4 +1,14 @@
 #!/usr/bin/env perl6
+usage() if @*ARGS.elems > 2 or @*ARGS.elems < 1;
 my $inputFile = @*ARGS[0];
 my $outputFile = @*ARGS[1] // "a.s";
 shell("cat $inputFile | ./MiniC.p6 | ./CodeGen.p6 > $outputFile");
+
+sub usage() {
+  say qq:to/END/
+  Usage:
+    ./minicc <inputFile> [<outputFile>]
+  END
+  ;
+  exit 1;
+}
