@@ -23,9 +23,9 @@
 4. 在中间代码处理的步骤, 进行了额外的处理/优化.
    1. 标签与跳转压缩. 在翻译 if 和 while 的过程中, 可能出现连续的标签, 可以压缩为一个标签; 可能出现跳转到某一标签后下一句是跳转到另一个标签, 可以压缩为跳转到最终目的地.
    2. 死代码消除. 应用激进的死代码消除策略, 初始假定只有第一条代码可达, 往后标记所有可达语句, 翻译为汇编代码时无视不可达代码. 这一步没有进行 Guard 判定, 即语义上不可达的代码无法识别, 只是简单的消除在语法上不可达的代码.
-   3. 常量折叠. 压缩表达式, 使得一元表达式不包含数字字面量(若有, 转换为赋值), 二元表达式最多有一个数字字面量.
+   3. 常量传播和折叠. 压缩表达式, 使得一元表达式不包含数字字面量(若有, 转换为赋值), 二元表达式最多有一个数字字面量.
    4. 选择 Callee. 在线性扫描活性分析的基础上, 将寄存器划分为 Caller Save 和 Callee Save 两部分, 对于在函数调用时活跃的变量, 尽量将其分配到 Callee Save 的寄存器中, 以此减少甚至去除函数调用时的 Caller Save 工作.
-   5. 指令选择( TODO ). 对于数组操作中常见的 `*4` 操作, 改用左移操作代替, 减轻运算强度.
+   5. 指令选择. 对于数组操作中常见的 `*4` 操作, 改用左移操作代替, 减轻运算强度.
 5. 跳过了 Tigger 代码的生成过程. 实际上, Tigger 代码与 RISC-V 代码的区别很小, 且全局变量的设计比较复杂. 在汇编代码中, 将全局标量设计为单元素数组.
 6. 主要使用 Perl 6 语言作为开发语言. 一方面可以使用更高阶的抽象, 另一方面 Perl 6 原生的 grammar 语法可以方便地解析文本, 比 lex/yacc 更轻松一点.
 
@@ -34,7 +34,7 @@
 1. 所有数据只有 int 和 int 数组这两种类型.
 2. 所有涉及的数字值绝对值都较小, 即不考虑运算时溢出的问题.
 3. 函数内的函数声明语法不支持.
-4. 逻辑判断语句没有实现为短路, 在数据类型限制的前提下, 也就是 `||` 实现为 `|`, `&&` 实现为 `&`.
+4. 逻辑判断语句没有实现为短路.
 
 ## 编译器设计与实现
 
@@ -1286,11 +1286,25 @@ sub fixLabel(Str $label is copy) {
 
 注意这一步从第一条语句开始一个一个基本块的挑, 实际上, 不可达的基本块会被丢弃, 也就是说实现了死代码消除.
 
-#### 常量折叠
+#### 常量传播和折叠
 
 ```
 for %BLOCKS.kv -> $function, %blocks {
   for ^%blocks.elems -> $blockId {
+    my %VALUE;
+  loop {
+    my $modified = False;
+    for ^%blocks{$blockId}.Array.elems -> $instructionId {
+      my $instruction := %blocks{$blockId}[$instructionId];
+      given $instruction<type> {
+        when 'scalarRval' {
+          %VALUE{$instruction<def>} = $instruction<use>[0];
+          if defined %VALUE{%VALUE{$instruction<def>}} {
+            %VALUE{$instruction<def>} = %VALUE{%VALUE{$instruction<def>}};
+          }
+        }
+      }
+    }
     for ^%blocks{$blockId}.Array.elems -> $instructionId {
       my $instruction := %blocks{$blockId}[$instructionId];
       given $instruction<type> {
@@ -1302,6 +1316,15 @@ for %BLOCKS.kv -> $function, %blocks {
             %instruction<def> = $instruction<def>;
             %instruction<use> = [resolveUnary($instruction<op>, $instruction<use>[0].Int)];
             $instruction = %instruction;
+            $modified = True;
+          } elsif isInteger(%VALUE{$instruction<use>[0]} // '#') {
+            my %instruction;
+            %instruction<id> = $instruction<id>;
+            %instruction<type> = 'scalarRval';
+            %instruction<def> = $instruction<def>;
+            %instruction<use> = [resolveUnary($instruction<op>, %VALUE{$instruction<use>[0]}.Int)];
+            $instruction = %instruction;
+            $modified = True;
           }
         }
         when 'binary' {
@@ -1312,15 +1335,44 @@ for %BLOCKS.kv -> $function, %blocks {
             %instruction<def> = $instruction<def>;
             %instruction<use> = [resolveBinary($instruction<op>, $instruction<use>[0].Int, $instruction<use>[1].Int)];
             $instruction = %instruction;
+            $modified = True;
+          } elsif isInteger(%VALUE{$instruction<use>[0]} // '#') and isInteger($instruction<use>[1]) {
+            my %instruction;
+            %instruction<id> = $instruction<id>;
+            %instruction<type> = 'scalarRval';
+            %instruction<def> = $instruction<def>;
+            %instruction<use> = [resolveBinary($instruction<op>, %VALUE{$instruction<use>[0]}.Int, $instruction<use>[1].Int)];
+            $instruction = %instruction;
+            $modified = True;
+          } elsif isInteger($instruction<use>[0]) and isInteger(%VALUE{$instruction<use>[1]} // '#') {
+            my %instruction;
+            %instruction<id> = $instruction<id>;
+            %instruction<type> = 'scalarRval';
+            %instruction<def> = $instruction<def>;
+            %instruction<use> = [resolveBinary($instruction<op>, $instruction<use>[0].Int, %VALUE{$instruction<use>[1]}.Int)];
+            $instruction = %instruction;
+            $modified = True;
+          } elsif isInteger(%VALUE{$instruction<use>[0]} // '#') and isInteger(%VALUE{$instruction<use>[1]} // '#') {
+            my %instruction;
+            %instruction<id> = $instruction<id>;
+            %instruction<type> = 'scalarRval';
+            %instruction<def> = $instruction<def>;
+            %instruction<use> = [resolveBinary($instruction<op>, %VALUE{$instruction<use>[0]}.Int, %VALUE{$instruction<use>[1]}.Int)];
+            $instruction = %instruction;
+            $modified = True;
           }
         }
       }
+      last if $modified;
     }
+
+    last unless $modified;
+  }
   }
 }
 ```
 
-对于每一个基本块, 如果其中的计算表达式可以得到结果, 则转换为一个赋值语句.
+通过一个临时的 `VALUE` 字典记录变量当前的值, 只对标量的赋值和运算进行常量传播和折叠. 由于不是静态单赋值, 所以需要按照指令顺序进行折叠, 在进行每一次折叠后都要刷新 `VALUE` 字典. 常量传播和折叠只对每一个基本块进行, 不做跨基本块分析.
 
 ### 活性分析与寄存器分配
 
@@ -1451,6 +1503,7 @@ for %instruction.kv -> $id, $instruction {
       %livenessAnalyse{$function}{$variable}<start> min= $instruction<id>-1;
       %livenessAnalyse{$function}{$variable}<start> max= 0;
       %livenessAnalyse{$function}{$variable}<end> max= $instruction<id>;
+      next if isGlobal($variable) and !isArray($variable);
       %usedOnCall{$variable} = True if $instruction<type> eq 'call';
     }
   }
@@ -1459,6 +1512,8 @@ for %instruction.kv -> $id, $instruction {
 把活跃范围连起来, 生成活跃区间, 标记好在函数调用时活跃的变量. 这些变量如果分配了 Caller Save 寄存器, 在函数调用时就需要保存, 因此尽量把它们分配到 Callee Save 上.
 
 这种方法有一种情况会遗漏, 即 `t0 = call f_func`, 而且 `t0` 的活跃区间跨过了此处的 call, 这样由于这一句定义了 `t0`, 它在这一句上不活跃, 为了解决这种问题需要先生成活跃区间, 再判断是否跨过了这个函数调用, 实际上, 对于每个函数调用, 可能忽略的这种变量最多只有一个, 因此我选择不做处理, 就分配给 `t0` Caller Save, 假装不知道它的活跃区间覆盖了这里.
+
+另外, 由于全局标量在每次函数调用时都必须写回, 优先给它分配 Caller Save, 不占用 Callee Save.
 
 #### 寄存器分配
 
@@ -1527,6 +1582,8 @@ for %instruction.kv -> $id, $instruction {
       %registers{$register} = $variable;
       next;
     }
+    
+    next if isGlobal($variable) and !isArray($variable);
 
     if @calleeSave.elems > 0 {
       my $register = @calleeSave.shift;
@@ -1538,7 +1595,7 @@ for %instruction.kv -> $id, $instruction {
   }
 ```
 
-按照 Linear Scan 算法执行, 特别地, 记录使用的 Callee Save 寄存器的信息, 后面的代码生成中, 函数开头要保存 Callee Save 寄存器, 离开前要恢复.
+按照 Linear Scan 算法执行, 特别地, 记录使用的 Callee Save 寄存器的信息, 后面的代码生成中, 函数开头要保存 Callee Save 寄存器, 离开前要恢复. 优先为变量分配寄存器, 不管它被建议分配到 Caller Save 还是 Callee Save, 但是全局标量不要分配到 Callee Save, 因为 Callee Save 在函数调用时不写回, 我不想针对分配到 Callee Save 的全局标量在函数调用时再做讨论.
 
 ### 代码生成
 
@@ -1550,6 +1607,8 @@ for %SYMBOLS.kv -> $id, %info {
   say "\t.comm\t$id,{%info<size>},4";
 }
 ```
+
+特别的, 把全局标量生成为单个元素的全局数组, 但在后面的操作上仍然区分开来.
 
 下面逐个函数生成代码. 汇编代码并不依赖函数定义的顺序.
 
@@ -1581,6 +1640,8 @@ for %SYMBOLS.kv -> $id, %info {
     $stackSize += 1;
   }
 ```
+
+把 Callee Save 的保存区放在函数帧的头部.
 
 #### 注册函数参数
 
@@ -1660,7 +1721,6 @@ for %SYMBOLS.kv -> $id, %info {
 
    ```
          when 'return' {
-
            registVariable($instruction<use>.Array[0]);
            if isInteger($instruction<use>.Array[0]) {
              @riscvCode.push("\tli\ta0,{$instruction<use>.Array[0]}");
@@ -1677,4 +1737,448 @@ for %SYMBOLS.kv -> $id, %info {
          }
    ```
 
-   ​
+   注意在每个返回的位置都要写上离开函数的逻辑, 在函数的自然尾部并不写上离开函数的逻辑, 这是因为假定每个函数都正确的写上了 return 语句. 此外, 针对返回值为整数的情况作了细微的优化, 不需要先将整数加载到某个寄存器再 `mv` 到 `a0`.
+
+   3. 直接赋值语句
+
+   ```
+         when 'scalarRval' {
+           if isDefineValid($instruction<def>, $instruction) {
+             registVariable($instruction<def>);
+             registVariable($instruction<use>.Array[0]);
+             my $reg2 = getRegister($instruction<def>, "a2");
+             if isInteger($instruction<use>.Array[0]) {
+               @riscvCode.push("\tli\t$reg2,{$instruction<use>.Array[0]}");
+             } else {
+               my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+               @riscvCode.push("\tmv\t$reg2,$reg0");
+             }
+             storeIfSpilled($instruction<def>, $reg2);
+           }
+         }
+         when 'arrayScalar' {
+           registVariable($instruction<use>.Array[0]);
+           registVariable($instruction<use>.Array[1]);
+           registVariable($instruction<use>.Array[2]);
+           my $reg2 = getRegister($instruction<use>.Array[0], "a2");
+           my $reg0 = getRegister($instruction<use>.Array[1], "a0");
+           my $reg1 = getRegister($instruction<use>.Array[2], "a1");
+           @riscvCode.push("\tadd\ta5,$reg2,$reg0");
+           @riscvCode.push("\tsw\t$reg1,0(a5)");
+         }
+         when 'scalarArray' {
+           if isDefineValid($instruction<def>, $instruction) {
+             registVariable($instruction<def>);
+             registVariable($instruction<use>.Array[0]);
+             registVariable($instruction<use>.Array[1]);
+             my $reg2 = getRegister($instruction<def>, "a2");
+             my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+             my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+             @riscvCode.push("\tadd\ta5,$reg0,$reg1");
+             @riscvCode.push("\tlw\t$reg2,0(a5)");
+             storeIfSpilled($instruction<def>, $reg2);
+           }
+         }
+   ```
+
+   针对标量赋值数字做了优化, 关于数组元素赋值数字, 因为最后也要从寄存器中 `sw`, 所以不需要讨论.
+
+   4. 函数调用语句
+
+   ```
+         when 'param' {
+           registVariable($instruction<use>.Array[0]);
+           loadParameter($currentParameterId, $instruction<use>.Array[0]);
+           $currentParameterId += 1;
+         }
+         when 'call' {
+           $currentParameterId = 0;
+           for %registers.kv -> $register, $variable {
+             storeCaller($register, $variable);
+           }
+           @riscvCode.append(@parameterCode);
+           @parameterCode = [];
+           @riscvCode.push("\tcall\t{$instruction<function>.substr(2)}");
+           for %registers.kv -> $register, $variable {
+             loadCaller($register, $variable);
+           }
+           if isDefineValid($instruction<def>, $instruction) {
+             registVariable($instruction<def>);
+             my $register = getRegister($instruction<def>, "a2");
+             @riscvCode.push("\tmv\t$register,a0");
+             storeIfSpilled($instruction<def>, $register);
+           }
+         }
+   ```
+
+   顺序非常重要, 由于将几乎不用到的 `a0` 到 `a7` 作为临时寄存器, 在 `param` 时, 这些寄存器有特殊的作用, 因此 `call` 的写回工作一定要在准备参数之前完成, 但是 Eeyore 的逻辑是先出现 `param` 语句, 再出现 `call` 语句, 因此生成 `param` 代码时先保存到 `@parameterCode` 中, 遇到 `call` 时再写入到写回寄存器的逻辑之后. (主要是写回全局标量时涉及到 `a5`)
+
+   5. 一元运算语句
+
+   ```
+         when 'unary' {
+           if isDefineValid($instruction<def>, $instruction) {
+             registVariable($instruction<def>);
+             registVariable($instruction<use>.Array[0]);
+             my $reg2 = getRegister($instruction<def>, "a2");
+             my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+             given $instruction<op> {
+               when '-' {
+                 @riscvCode.push("\tsub\t$reg2,zero,$reg0");
+               }
+               when '!' {
+                 @riscvCode.push("\tseqz\t$reg2,$reg0");
+               }
+             }
+             storeIfSpilled($instruction<def>, $reg2);
+           }
+         }
+   ```
+
+   经过常量传播和折叠, 一元运算语句的操作数必然是变量.
+
+   6. 二元操作语句
+
+   ```
+         when 'binary' {
+           if isDefineValid($instruction<def>, $instruction) {
+             registVariable($instruction<def>);
+             registVariable($instruction<use>.Array[0]);
+             registVariable($instruction<use>.Array[1]);
+             my $reg2 = getRegister($instruction<def>, "a2");
+             given $instruction<op> {
+               when '||' {
+                 my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                 my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                 @riscvCode.push("\tor\t$reg2,$reg0,$reg1");
+                 @riscvCode.push("\tsnez\t$reg2,$reg2");
+               }
+               when '&&' {
+                 my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                 my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                 @riscvCode.push("\tand\t$reg2,$reg0,$reg1");
+                 @riscvCode.push("\tsnez\t$reg2,$reg2");
+               }
+               when '==' {
+                 my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                 my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                 @riscvCode.push("\txor\t$reg2,$reg0,$reg1");
+                 @riscvCode.push("\tseqz\t$reg2,$reg2");
+               }
+               when '!=' {
+                 my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                 my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                 @riscvCode.push("\txor\t$reg2,$reg0,$reg1");
+                 @riscvCode.push("\tsnez\t$reg2,$reg2");
+               }
+               when '<' {
+                 if isInteger($instruction<use>.Array[1]) {
+                   my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                   @riscvCode.push("\tslt\t$reg2,$reg0,{$instruction<use>.Array[1]}");
+                 } else {
+                   my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                   my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                   @riscvCode.push("\tslt\t$reg2,$reg0,$reg1");
+                 }
+               }
+               when '>' {
+                 if isInteger($instruction<use>.Array[0]) {
+                   my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                   @riscvCode.push("\tslt\t$reg2,$reg1,{$instruction<use>.Array[0]}");
+                 } else {
+                   my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                   my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                   @riscvCode.push("\tsgt\t$reg2,$reg0,$reg1");
+                 }
+               }
+               when '+' {
+                 if isInteger($instruction<use>.Array[1]) {
+                   my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                   @riscvCode.push("\tadd\t$reg2,$reg0,{$instruction<use>.Array[1]}");
+                 } elsif isInteger($instruction<use>.Array[0]) {
+                   my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                   @riscvCode.push("\tadd\t$reg2,$reg1,{$instruction<use>.Array[0]}");
+                 } else {
+                   my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                   my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                   @riscvCode.push("\tadd\t$reg2,$reg0,$reg1");
+                 }
+               }
+               when '-' {
+                 my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                 my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                 @riscvCode.push("\tsub\t$reg2,$reg0,$reg1");
+               }
+               when '*' {
+                 if $instruction<use>.Array[1] eq 4 {
+                   my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                   @riscvCode.push("\tsll\t$reg2,$reg0,2");
+                 } else {
+                   my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                   my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                   @riscvCode.push("\tmul\t$reg2,$reg0,$reg1");
+                 }
+               }
+               when '/' {
+                 my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                 my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                 @riscvCode.push("\tdiv\t$reg2,$reg0,$reg1");
+               }
+               when '%' {
+                 my $reg0 = getRegister($instruction<use>.Array[0], "a0");
+                 my $reg1 = getRegister($instruction<use>.Array[1], "a1");
+                 @riscvCode.push("\trem\t$reg2,$reg0,$reg1");
+               }
+             }
+             storeIfSpilled($instruction<def>, $reg2);
+           }
+         }
+   ```
+
+   针对几种常见的操作做了讨论和优化, 包括加法允许常数出现, 小于允许常数出现, `num > rval` 可以转换为带常数出现的小于, 以及对于数组操作常见的 `* 4`, 使用 `sll reg, reg, 2` 来处理.
+
+   由于 writeup 的内容不太清楚, 下面给出实现非短路的逻辑运算符和一元运算符的对应表:
+
+   ```
+   x = y || z => or reg(x),reg(y),reg(z)
+                 snez reg(x),reg(x)
+     # without short circuit, it's same as 'x = Bool(y | z)'
+
+   x = y && z => and reg(x),reg(y),reg(z)
+                 snez reg(x),reg(x)
+     # without short circuit, it's same as 'x = Bool(y & z)'
+
+   x = y == z => xor reg(x),reg(y),reg(z)
+                 seqz reg(x),reg(x)
+
+   x = y != z => xor reg(x),reg(y),reg(z)
+                 snez reg(x),reg(x)
+
+   x = y < z => slt reg(x),reg(y),reg(z)
+
+   x = y > z => sgt reg(x),reg(y),reg(z)
+
+   if x == 0 goto L => beqz reg(x),.L
+
+   x = !y => seqz reg(x),reg(y)
+
+   x = -y => sub reg(x),zero,reg(y)
+   ```
+
+#### 函数尾
+
+```
+  @riscvCode.push("\t.size\t{$function.substr(2)}, .-{$function.substr(2)}");
+
+  my $riscvCode = @riscvCode.join("\n");
+  my $STK = (($stackSize div 4) + 1) * 16;
+  say $riscvCode.subst(/STK\-4/, $STK - 4, :g)
+                .subst(/STK/, $STK, :g);
+```
+
+生成函数尾, 并重写栈帧大小. 这是因为栈帧大小是在生成代码的时候同时确定的.
+
+#### 寄存器约定
+
+上边代码中还有一些辅助函数的内容没有给出, 大多数可由其名称得知作用, 使用这些辅助函数时唯一非平凡的点就是需要知道对于溢出变量的处理和临时寄存器的约定.
+
+借鉴蔡佳晋同学的想法, 用于参数和结果传递的 `a0` 到 `a7` 这八个寄存器在此外的大多数情况下没有使用, 因此可以用来加载溢出变量, 加载数字和加载数组地址. 由于前面的工作, 同时需要的溢出变量不超过三个, 数字不超过一个, 地址不超过一个, 因此这八个寄存器是够用的. 在大多数语句下也无需担心错误使用. 只有在参数准备时, 需要将所有参数在原寄存器准备完毕后在一次性加载到 `a` 系列寄存器, 这是因为准备参数的过程可能修改 `a` 系列寄存器. Eeyore 代码生成时, 所有 `param` 语句紧跟在 `call` 的前面, 因此可以像前面代码那样编写.
+
+我使用的寄存器约定是, `a0` 到 `a2` 作为溢出变量加载区, `a4` 用于加载数字, `a5` 用于加载数组地址.
+
+## 测试
+
+### 测试用例
+
+1. 课程改革时的测试文件, 包括 aarg.c, ab.c, arr.c, cmt.c, expr.c, fac.c, func.c, funny.c, id.c, if.c, ifelse.c, logic.c, nnim.c, qsort.c, recur.c, revstr.c, scope.c, sort.c, while.c, wseq.c. 测试数据为 data/ 下的数据.
+2. 个性功能的测试.
+3. 由于没有其他同学测试用的测试集, 因此没有做动态指令数测试.
+
+### 测试效果
+
+对于上边的 (1) 部分, 除了 logic.c 要求实现短路未通过, 其余都通过了正确性测试. 其中 wseq.c 和 funny.c 在 `diff` 命令下显示结果不同, 但编写脚本逐行比对结果相同, 猜测是空白符号的问题, 至少输出的所有有效信息都是相同的.
+
+上面部分使用以下脚本检测:
+
+```
+my $test = @*ARGS[0];
+for ^100 -> $i {
+  shell("/opt/riscv-qemu/bin/qemu-riscv32 -L /opt/riscv/sysroot/ main < data/$test/data$i.in > out");
+  $ = shell("diff out data/$test/data$i.out");
+  say $i;
+}
+```
+
+对于错误报告测试, 效果如下:
+
+```
+int main() {
+  int a;
+  int b[10];
+  a = 42;
+  b[0] = 0;
+  a = a + b;
+  return 0;
+}
+
+OUTPUT:
+Type check fails!
+  Get Array,
+  expecting Scalar Number.
+```
+
+```
+int main() {
+  int a;
+  int a
+  return 0;
+}
+
+OUTPUT:
+Cannot defined variable a!
+  a has already been defined in this scope.
+```
+
+```
+int f();
+int f();
+
+OK
+```
+
+```
+int f();
+int f(int x);
+
+Parameters unfit!
+  Call with 1 parameters,
+  expecting 0 parameters.
+```
+
+```
+int f();
+int f() { return 42; }
+
+OK
+```
+
+```
+int f() { return 42; }
+int f() { return 42; }
+
+OUTPUT:
+Cannot defined function f!
+  f has already been defined in this scope.
+```
+
+```
+int f(int x) { return x; }
+int main() {
+  int a[10];
+  f(a);
+  return 0;
+}
+
+OUTPUT:
+Parameters unfit!
+  Parameter 0 has type Array,
+  expecting Scalar.
+```
+
+### 主要遇到的错误和解决
+
+1. func.c 中的
+
+```
+int g(int x)
+{
+    if (x % 2 == 0)
+        return f(x);
+    else
+        return f(x + 1);
+}
+```
+
+这个函数在生成的 Eeyore 长这样:
+
+```
+f_g [1]
+var t8
+t8 = p0 % 2
+var t9
+t9 = t8 == 0
+if t9 == 0 goto l2
+param p0
+var t10
+t10 = call f_f
+return t10
+goto l3
+l2:
+var t11
+t11 = p0 + 1
+param t11
+var t12
+t12 = call f_f
+return t12
+l3:
+end f_g
+```
+
+注意 `l3:` 后什么也没有, `goto l3` 也是死代码, 在年代久远的一次调试中, 生成的 Tigger 代码因为这个玩意一直段错误, 随后加入了死代码消除逻辑.
+
+死代码消除时, 一开始是把所有没有前驱的去掉, 迭代. 但是发现像循环这种东西自己连接自己, 哪怕整个循环在 `reurn` 后面也都有前驱. 因此采用类似于标记清扫算法的办法, 激进的去除所有语法上不可达的代码.
+
+2. aarg.c 中, 全局变量在多个函数内都有使用, 因此发现了全局标量在函数跳转时必须写回.
+3. funny.c 的逻辑比较混乱, 出现了很多疑难杂症, 但都不是什么大问题, 比如说一元运算符忘记还有 `!` 之类的, 还有数组操作的一些实现错, 发现后马上知道错误原因并且修正.
+4. qsort.c 和 wseq.c 的速度很慢, 因此考虑了增加分析 `usedOnCall`, 合理分配 Caller Save 和 Callee Save. 原本是打算直接全部 Caller Save 了事.
+5. 常量传播和折叠时, 一开始是并发的折叠, 后来发现由于不是静态单赋值, 这样会出错, 典型的场景是:
+
+```
+TURN 1:
+a = 3
+a = a + 1
+a = a + 2
+a = a + 3
+
+TRUN 2:
+a = 3
+a = 4
+a = 5
+a = 6
+```
+
+这显然不对, 因此改为每发生一次折叠就重新传播一次.
+
+6. 错误检查一开始比较 naive, 具体情况记不清了, 在陶淼学长的帮助下找到了大多数遗漏的情况.
+
+### 工具存在的问题
+
+没有使用 Lex/Yacc, 在后期甚至跳过 Tigger, 生成的 Eeyore 也和 writeup 的 Eeyore 不兼容.
+
+RISC-V 的模拟器没发现什么问题.
+
+Tigger 模拟器很慢, 机器代码大概十几秒的 wseq.c 要跑二十多分钟.
+
+Eeyore 模拟器不支持 `param num` 的形式.
+
+此外, 课程改革时的代码包中的 Tigger 生成器和 RISC-V 生成器产生的代码好像并不能在对应的模拟器上执行.
+
+Perl 6 的问题. 太多了[捂脸], 因为是一门新语言, 虽然主要功能还行, 但是一些边角的地方有各种奇怪的 BUG. 在做这个实习的过程中, 和 Perl 6 社区的人特别是针对 Regex 和 Grammar 做了很多交流, 完善了它的官方文档.
+
+## 实习总结
+
+### 收获和体会
+
+1. 最关键的一点就是终于知道数据流分析是干嘛的了, 上学期选编译原理的时候这一部分没有实践根本不知道是啥. 强烈推荐先选实习再选原理, 实习的时候我几乎是把编译原理重新学了一遍.
+2. 理解了线性扫遍算法, 浏览了二次装箱算法, 图着色算法和其他的寄存器分配算法, 虽然最终还是实现了线性扫描算法, 但是也看到了活跃区间和活跃范围的不同, 第一次实现中使用活跃范围和跳出基本块时写回, 实际效果也并没有那么糟糕, 这是因为活跃范围大多很短, 与连成一条的的活跃区间不同, 活跃范围可以区分两次不同的定义, 因此需要写回的实际上没有那么多.
+3. 实践了 Perl 6, 用它完成了一个工程. 参与到它的开发中, 包括 BUG 修复, 功能实现和文档撰写, 也让我看到了现代语言实现的方式, 编译实习课讲的就是实现一个语言到机器代码的过程, Perl 6 的工具链, 类似于 Pypy, 让我看到了最前沿的一些编程语言实现方法.
+4. 理解了交流讨论的重要性. 虽然是一门独立完成的实习课, 但是和肖博文, 蔡佳晋, 特古斯等同学的讨论交流启发了我很多的想法, 帮助我克服了很多错误理解.
+5. 信心. 每次面对新的任务, 几乎都不知道要怎么弄, 但是一旦决定去做, 从查资料和思考到尝试到实现一般不超过两天.
+6. 最麻烦的就是活性分析和寄存器分配了. 我一开始理解错了, 只生成活跃范围导致分配出现问题, 最恶心的莫过于控制流(分支, 循环)和全局变量. 对于活跃范围, 一个分支加载了, 另一个没有加载, 但是在线性 IR 上呈现出前后关系, 因而卸载后面的分支会以为已经加载了而出错. 如果在控制流图上做, 一方面分支合并时需要修复变量和寄存器的对应关系, 另一方面面对循环时又乱了. 一开始就按照标准的活性分析做恐怕就没这么多问题了, 不过在这个过程中也更深入的了解了静态单赋值形式和变量生存周期在实际中可能出现的各种极端情况.
+
+### 课程建议
+
+1. MiniC 那个 `main` 函数单独列出来的语法可以改一改了[捂脸].
+2. 支持 `func(expr)` 好像不太难, 可以作为 Base 集, 包括不用强制接收返回值和参数可以是表达式.
+3. 讲解内容上, 寄存器分配和线性扫描算法可以再讲详细一点, 因为原理课上应该没讲, 一旦跟我一样出现理解偏差会花很多时间在错误的方向.
+4. 实习过程上, 因为这一次给了很多灵活的空间, 所以感觉已经很好了.

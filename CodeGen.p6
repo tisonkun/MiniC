@@ -329,6 +329,16 @@ for %LINEAR.kv -> $function, %instruction {
       %registers{$register} = $variable;
       next;
     }
+
+    next if isGlobal($variable) and !isArray($variable);
+
+    if @calleeSave.elems > 0 {
+      my $register = @calleeSave.shift;
+      %livenessAnalyse{$function}{$variable}<reg> = $register;
+      %registers{$register} = $variable;
+      %SYMBOLS{$function}<usedCallee>{$register} = True;
+      next;
+    }
   }
 
   # note qq:to/END/;
